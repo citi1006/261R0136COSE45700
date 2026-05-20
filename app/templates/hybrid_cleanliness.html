@@ -1,0 +1,268 @@
+{% extends "base.html" %}
+{% block content %}
+{% set restaurant_prompt_active = (selected_prompt_profile or "restaurant") == "restaurant" %}
+<section class="section">
+  <div class="section-head">
+    <h1>Hybrid 청결도</h1>
+    <p>물체 기반 청결도 평가를 먼저 수행하고, confidence가 {{ object_confidence_threshold }}보다 낮으면 Action 평가로 전환합니다.</p>
+  </div>
+</section>
+
+<section class="grid-two">
+  <section class="panel">
+    <form method="post" action="/hybrid-cleanliness" enctype="multipart/form-data" class="stack-gap" id="hybrid-cleanliness-form">
+      <label>
+        <span>CCTV 설정</span>
+        <select name="config_id" id="hybrid-config-select" required>
+          <option value="">선택</option>
+          {% for config in configs %}
+          <option
+            value="{{ config.config_id }}"
+            {% if selected_config and selected_config.config_id == config.config_id %}selected{% endif %}>
+            {{ config.store_name }} / {{ config.cctv_nickname }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>
+        <span>테이블 ROI</span>
+        <select name="roi_name" id="hybrid-roi-select" required></select>
+      </label>
+
+      <label>
+        <span>CCTV 이미지/프레임</span>
+        <input type="file" name="image_file" accept="image/*" required>
+      </label>
+
+      <div class="prompt-toggle-row">
+        <input
+          type="hidden"
+          name="prompt_profile"
+          id="hybrid-prompt-profile"
+          value="{{ selected_prompt_profile or 'restaurant' }}">
+        <button
+          type="button"
+          class="secondary-button prompt-toggle {% if restaurant_prompt_active %}active{% endif %}"
+          id="hybrid-restaurant-prompt-toggle"
+          aria-pressed="{{ 'true' if restaurant_prompt_active else 'false' }}">
+          식당 특화 프롬프트
+        </button>
+      </div>
+
+      <label>
+        <span>Action fallback 근접 반경(px)</span>
+        <input type="number" name="near_margin" min="10" max="300" step="5" value="{{ near_margin or 80 }}" required>
+      </label>
+
+      <label>
+        <span>결제 이후 직원 배지 동선 JSON</span>
+        <textarea name="trajectory_json" rows="12" required>{{ trajectory_json or sample_trajectory_json }}</textarea>
+      </label>
+
+      <label class="checkbox-row no-top-pad">
+        <input type="checkbox" name="manual_confirmed" value="true" {% if manual_confirmed %}checked{% endif %}>
+        <span>직원이 테이블 청소 완료를 수동 확인함</span>
+      </label>
+
+      <button type="submit" class="primary-button">Hybrid 청결도 검사 실행</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>최종 결과</h2>
+    </div>
+    {% if hybrid_result %}
+    <div class="result-card">
+      <div class="result-topline">
+        <span class="status {% if hybrid_result.final_decision == 'cleaned_likely' %}present{% elif hybrid_result.final_decision == 'needs_check' %}absent{% else %}unknown{% endif %}">
+          {{ hybrid_result.final_decision }}
+        </span>
+        <strong>{{ hybrid_result.store_name }} / {{ hybrid_result.cctv_nickname }} / {{ hybrid_result.roi_name }}</strong>
+      </div>
+
+      <dl class="result-grid">
+        <div>
+          <dt>최종 신뢰도</dt>
+          <dd>{{ "%.0f"|format(hybrid_result.final_confidence * 100) }}%</dd>
+        </div>
+        <div>
+          <dt>최종 판단 단계</dt>
+          <dd>{{ hybrid_result.final_stage }}</dd>
+        </div>
+        <div>
+          <dt>물체 기반 신뢰도</dt>
+          <dd>{{ "%.0f"|format(hybrid_result.object_result.confidence * 100) }}%</dd>
+        </div>
+        <div>
+          <dt>Action fallback</dt>
+          <dd>{{ "실행" if hybrid_result.fallback_triggered else "미실행" }}</dd>
+        </div>
+      </dl>
+
+      <p class="result-summary">{{ hybrid_result.summary }}</p>
+
+      <h3 class="subhead">물체 기반 평가</h3>
+      <dl class="result-grid">
+        <div>
+          <dt>청결도 점수</dt>
+          <dd class="score-large">{{ hybrid_result.object_result.score }} / 5</dd>
+        </div>
+        <div>
+          <dt>임계치</dt>
+          <dd>{{ "%.0f"|format(hybrid_result.object_confidence_threshold * 100) }}%</dd>
+        </div>
+      </dl>
+
+      {% if hybrid_result.object_result.findings %}
+      <table class="table compact">
+        <thead>
+          <tr>
+            <th>물체 기반 판단 근거</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for finding in hybrid_result.object_result.findings %}
+          <tr>
+            <td>{{ finding }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+
+      <div class="image-compare">
+        <table class="table compact">
+          <thead>
+            <tr>
+              <th>정확히 식별 가능한 물체</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for object_name in hybrid_result.object_result.exact_objects %}
+            <tr>
+              <td>{{ object_name }}</td>
+            </tr>
+            {% else %}
+            <tr>
+              <td>없음</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <table class="table compact">
+          <thead>
+            <tr>
+              <th>합리적으로 추정 가능한 물체</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for object_name in hybrid_result.object_result.estimated_objects %}
+            <tr>
+              <td>{{ object_name }}</td>
+            </tr>
+            {% else %}
+            <tr>
+              <td>없음</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {% if hybrid_result.action_result %}
+      <h3 class="subhead">Action fallback 평가</h3>
+      <dl class="result-grid">
+        <div>
+          <dt>Action 결정</dt>
+          <dd>{{ hybrid_result.action_result.decision }}</dd>
+        </div>
+        <div>
+          <dt>Action 신뢰도</dt>
+          <dd>{{ "%.0f"|format(hybrid_result.action_result.confidence * 100) }}%</dd>
+        </div>
+        <div>
+          <dt>테이블 주변 체류</dt>
+          <dd>{{ hybrid_result.action_result.features.dwell_seconds }}초</dd>
+        </div>
+        <div>
+          <dt>Action 기준</dt>
+          <dd>체류 시간만 사용</dd>
+        </div>
+      </dl>
+      <p class="result-summary">{{ hybrid_result.action_result.summary }}</p>
+      <table class="table compact">
+        <thead>
+          <tr>
+            <th>Action 근거</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in hybrid_result.action_result.evidence %}
+          <tr>
+            <td>{{ item }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+
+      <figure class="image-preview single-preview">
+        <img src="{{ hybrid_result.object_result.llm_input_url }}" alt="{{ hybrid_result.roi_name }} ROI crop sent to OpenAI">
+        <figcaption>물체 기반 평가 입력 ROI crop</figcaption>
+      </figure>
+    </div>
+    {% else %}
+    <p class="helper">CCTV 이미지/프레임과 직원 배지 동선을 입력하면, 물체 기반 평가 후 confidence가 낮은 경우에만 Action 평가를 실행합니다.</p>
+    {% endif %}
+  </section>
+</section>
+
+<script>
+  const hybridConfigs = {{ configs_payload|tojson }};
+  const selectedHybridConfigId = "{{ selected_config.config_id if selected_config else '' }}";
+  const selectedHybridRoiName = "{{ selected_roi_name or '' }}";
+  const hybridConfigSelect = document.getElementById("hybrid-config-select");
+  const hybridRoiSelect = document.getElementById("hybrid-roi-select");
+  const hybridPromptProfile = document.getElementById("hybrid-prompt-profile");
+  const hybridRestaurantPromptToggle = document.getElementById("hybrid-restaurant-prompt-toggle");
+
+  function renderHybridRois(configId) {
+    hybridRoiSelect.innerHTML = "";
+    const selected = hybridConfigs.find((item) => item.config_id === configId);
+    if (!selected) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "먼저 CCTV 설정 선택";
+      hybridRoiSelect.appendChild(option);
+      return;
+    }
+
+    selected.areas.forEach((area) => {
+      const option = document.createElement("option");
+      option.value = area.name;
+      const pointSummary = (area.points || []).map((point) => `(${point.x}, ${point.y})`).join(" ");
+      option.textContent = `${area.name} ${pointSummary}`;
+      if (area.name === selectedHybridRoiName) {
+        option.selected = true;
+      }
+      hybridRoiSelect.appendChild(option);
+    });
+  }
+
+  function renderHybridRestaurantPromptToggle() {
+    const active = hybridPromptProfile.value === "restaurant";
+    hybridRestaurantPromptToggle.classList.toggle("active", active);
+    hybridRestaurantPromptToggle.setAttribute("aria-pressed", active ? "true" : "false");
+  }
+
+  hybridConfigSelect.addEventListener("change", (event) => renderHybridRois(event.target.value));
+  hybridRestaurantPromptToggle.addEventListener("click", () => {
+    hybridPromptProfile.value = hybridPromptProfile.value === "restaurant" ? "general" : "restaurant";
+    renderHybridRestaurantPromptToggle();
+  });
+  renderHybridRois(selectedHybridConfigId || hybridConfigSelect.value);
+  renderHybridRestaurantPromptToggle();
+</script>
+{% endblock %}

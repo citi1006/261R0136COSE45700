@@ -44,8 +44,8 @@ MVP1의 중심 가정은 다음과 같다.
 - 4점 polygon ROI 편집 및 저장
 - ROI 좌표 정규화
 - 저장된 ROI 기준 image/video 업로드 분석
-- Gemini 기반 사람 신체 점유율 visibility 검수
-- Gemini 기반 POP 존재 여부 판정
+- OpenAI 기반 사람 신체 점유율 visibility 검수
+- OpenAI 기반 POP 존재 여부 판정
 - `Present / Absent / Unknown` 저장
 - SQLite 기반 결과 저장
 - 리포트 조회 UI
@@ -84,10 +84,10 @@ flowchart LR
         Main --> AnalysisService[app/analysis.py]
         AnalysisService --> Validator[VideoValidator]
         AnalysisService --> QualityAnalyzer[QualityAnalyzer]
-        Validator --> GeminiVisibility[GeminiVisibilityClient]
-        QualityAnalyzer --> GeminiPop[GeminiPopClient]
-        GeminiVisibility --> GeminiAPI[Gemini API]
-        GeminiPop --> GeminiAPI
+        Validator --> OpenAIVisibility[OpenAIVisibilityClient]
+        QualityAnalyzer --> OpenAIPop[OpenAIPopClient]
+        OpenAIVisibility --> OpenAIAPI[OpenAI API]
+        OpenAIPop --> OpenAIAPI
     end
 
     subgraph LocalData["Local Data"]
@@ -109,14 +109,14 @@ flowchart LR
 
 - `app/main.py`: FastAPI 라우트와 화면 렌더링, 업로드 처리, 분석 실행 진입점을 담당한다.
 - `app/analysis.py`: ROI crop, visibility 검수, POP 판정, 콘솔 알림, 결과 저장까지 전체 분석 파이프라인을 담당한다.
-- `app/config.py`: 경로, Gemini 설정, threshold, 샘플링 간격 같은 실행 설정을 관리한다.
+- `app/config.py`: 경로, OpenAI 설정, threshold, 샘플링 간격 같은 실행 설정을 관리한다.
 - `app/database.py`: SQLite 테이블 생성과 분석 결과 저장/조회 쿼리를 담당한다.
 - `app/roi_store.py`: 점포/CCTV/ROI 설정 JSON과 기준 이미지를 저장하고 읽는다.
 - `app/schemas.py`: `Point`, `ROI`, `CCTVConfig` 데이터 구조와 ROI 점 정규화 규칙을 정의한다.
 - `app/templates/*`: 로컬 운영 UI 화면을 제공한다.
 - `app/static/roi-editor.js`: 4개 점 polygon ROI 편집 로직을 담당한다.
 - `scripts/generate_test_data.py`: 기준 이미지, 정상/차폐/어두운 테스트 데이터를 생성한다.
-- `tests/test_pipeline.py`: 가짜 Gemini 컴포넌트를 사용해 파이프라인이 기대값과 맞는지 검증한다.
+- `tests/test_pipeline.py`: 가짜 OpenAI 컴포넌트를 사용해 파이프라인이 기대값과 맞는지 검증한다.
 
 ## 6. 현재 동작 흐름
 
@@ -140,10 +140,10 @@ ROI는 `{name, points[4]}`로 저장되며, 점 순서는 `(x, y)` 기준 시작
 flowchart TD
     A[사용자가 image/video 업로드] --> B[선택한 CCTV / ROI 로드]
     B --> C[ROI crop 생성]
-    C --> D[Gemini visibility 검수]
+    C --> D[OpenAI visibility 검수]
     D --> E{visible_ratio / brightness 통과 여부}
     E -- No --> F[Unknown 처리]
-    E -- Yes --> G[Gemini POP 판정]
+    E -- Yes --> G[OpenAI POP 판정]
     G --> H{confidence 충분한가}
     H -- No --> I[Unknown 처리]
     H -- Yes --> J[Present 또는 Absent]
@@ -155,16 +155,16 @@ flowchart TD
 
 ### 6.3 현재 검수 로직
 
-현재 visibility 검수는 기준 이미지 diff가 아니라, ROI crop 안에서 사람 신체가 얼마나 영역을 차지하는지 Gemini가 직접 판단한다.
+현재 visibility 검수는 기준 이미지 diff가 아니라, ROI crop 안에서 사람 신체가 얼마나 영역을 차지하는지 OpenAI가 직접 판단한다.
 
-- image 입력: crop 1장을 Gemini에 보내 `human_body_ratio`를 받는다.
+- image 입력: crop 1장을 OpenAI에 보내 `human_body_ratio`를 받는다.
 - video 입력: `min(0.1초에 해당하는 프레임 수, 24)` 간격으로 프레임을 샘플링해 각 프레임의 `human_body_ratio`를 받는다.
 - `visible_ratio = 1 - human_body_ratio`
 - 추가 reject 조건은 현재 `too_dark` 뿐이며, blur 처리는 제거된 상태다.
 
 ### 6.4 현재 POP 판정 로직
 
-현재 POP 판정은 OpenCV 템플릿 매칭이 아니라 Gemini API 기반이다.
+현재 POP 판정은 OpenCV 템플릿 매칭이 아니라 OpenAI API 기반이다.
 
 - 입력 1: 목표 포스터 템플릿 이미지
 - 입력 2: ROI crop image 또는 crop video
@@ -207,8 +207,8 @@ SQLite에는 현재 다음 정보가 저장된다.
 | 사전 준비 | ROI를 사다리꼴 4점으로 지정한다. | 가능 | polygon ROI 저장 가능 |
 | 08:30 오픈 준비 | 점장이 매장을 정리한다. | 불가 | 실제 현장 행위는 시스템 범위 밖 |
 | 09:00 1차 보고 | 시스템이 고정 CCTV 기준 POP 상태를 분석한다. | 부분 가능 | 현재는 자동 스케줄이 아니라 사용자가 직접 업로드/실행 |
-| 11:30 피크 후 변화 감지 | 사람 차폐 여부를 고려해 판정 가능 여부를 검수한다. | 가능 | Gemini visibility 검수 구현 |
-| 13:00 점심 시간대 POP 점검 | ROI에서 목표 포스터가 붙어 있는지 판정한다. | 가능 | Gemini POP 판정 구현 |
+| 11:30 피크 후 변화 감지 | 사람 차폐 여부를 고려해 판정 가능 여부를 검수한다. | 가능 | OpenAI visibility 검수 구현 |
+| 13:00 점심 시간대 POP 점검 | ROI에서 목표 포스터가 붙어 있는지 판정한다. | 가능 | OpenAI POP 판정 구현 |
 | 13:00 점심 시간대 POP 점검 | 차폐가 심하면 `Unknown`으로 둔다. | 가능 | validator reject 시 `Unknown` |
 | 15:00 슈퍼바이저 중간 점검 | 여러 매장 결과를 보고 문제 매장을 확인한다. | 부분 가능 | 리포트 목록/최신 POP 조회는 가능, 자연어 정렬은 없음 |
 | 16:30 문제 항목 재촬영 요청 | `Unknown` 또는 reject 시 재촬영 요청을 보낸다. | 부분 가능 | 콘솔 출력만 있음, 별도 알림 채널 없음 |
@@ -269,7 +269,7 @@ SQLite에는 현재 다음 정보가 저장된다.
 ### 기획 대비 축소된 부분
 
 - “저장된 고정 CCTV 영상 자동 분석” 대신 현재는 업로드 기반 수동 실행이 중심이다.
-- “차폐 정도 계산”은 기존 rule-based CV가 아니라 Gemini 기반 사람 점유율 판정으로 바뀌었다.
+- “차폐 정도 계산”은 기존 rule-based CV가 아니라 OpenAI 기반 사람 점유율 판정으로 바뀌었다.
 - “재촬영 요청”은 앱 알림이 아니라 서버 콘솔 로그다.
 - “리포트 뷰어”는 존재하지만, 시계열 시각화와 방문 추천은 아직 없다.
 

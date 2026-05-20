@@ -1,0 +1,64 @@
+{
+  "store_name": "StoreAlpha",
+  "cctv_nickname": "Original",
+  "cctv_id": "StoreAlpha::Original",
+  "config_id": "StoreAlpha_Original",
+  "reference_image_path": "reference_images/StoreAlpha_Original.png",
+  "areas": [
+    {
+      "name": "table01",
+      "points": [
+        {
+          "x": 12,
+          "y": 872
+        },
+        {
+          "x": 285,
+          "y": 875
+        },
+        {
+          "x": 525,
+          "y": 710
+        },
+        {
+          "x": 274,
+          "y": 710
+        }
+      ],
+      "bounds": {
+        "x": 12,
+        "y": 710,
+        "width": 513,
+        "height": 165
+      }
+    },
+    {
+      "name": "table_small",
+      "points": [
+        {
+          "x": 488,
+          "y": 636
+        },
+        {
+          "x": 698,
+          "y": 652
+        },
+        {
+          "x": 702,
+          "y": 569
+        },
+        {
+          "x": 504,
+          "y": 573
+        }
+      ],
+      "bounds": {
+        "x": 488,
+        "y": 569,
+        "width": 214,
+        "height": 83
+      }
+    }
+  ],
+  "created_at": "2026-05-20T19:03:32"
+}

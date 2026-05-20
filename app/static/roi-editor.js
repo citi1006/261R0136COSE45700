@@ -55,31 +55,7 @@
       return points || [];
     }
 
-    const centroid = points.reduce(
-      (accumulator, point) => ({
-        x: accumulator.x + point.x,
-        y: accumulator.y + point.y,
-      }),
-      { x: 0, y: 0 },
-    );
-    centroid.x /= points.length;
-    centroid.y /= points.length;
-
-    const sorted = [...points].sort((left, right) => {
-      const leftAngle = Math.atan2(centroid.y - left.y, left.x - centroid.x);
-      const rightAngle = Math.atan2(centroid.y - right.y, right.x - centroid.x);
-      return leftAngle - rightAngle;
-    });
-
-    let startIndex = 0;
-    for (let index = 1; index < sorted.length; index += 1) {
-      const current = sorted[index];
-      const start = sorted[startIndex];
-      if (current.x < start.x || (current.x === start.x && current.y < start.y)) {
-        startIndex = index;
-      }
-    }
-    return sorted.slice(startIndex).concat(sorted.slice(0, startIndex));
+    return rectangleToPoints(boundsFromPoints(points));
   }
 
   function normalizeRect(start, end) {
@@ -92,6 +68,14 @@
 
   function pointDistance(a, b) {
     return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  function diagonalHandles(roi) {
+    const bounds = boundsFromPoints(roi.points);
+    return [
+      { name: "topLeft", point: { x: bounds.x, y: bounds.y } },
+      { name: "bottomRight", point: { x: bounds.x + bounds.width, y: bounds.y + bounds.height } },
+    ];
   }
 
   function drawPolygon(points) {
@@ -143,9 +127,9 @@
       ctx.fillText(roi.name, labelAnchor.x + 4, Math.max(16, labelAnchor.y - 8));
 
       if (active) {
-        roi.points.forEach((point) => {
+        diagonalHandles(roi).forEach((handle) => {
           ctx.beginPath();
-          ctx.arc(point.x, point.y, HANDLE_RADIUS, 0, Math.PI * 2);
+          ctx.arc(handle.point.x, handle.point.y, HANDLE_RADIUS, 0, Math.PI * 2);
           ctx.fillStyle = "#ffffff";
           ctx.fill();
           ctx.strokeStyle = "#111827";
@@ -175,7 +159,7 @@
       item.innerHTML = `
         <strong>${roi.name}</strong>
         <span>x=${bounds.x}, y=${bounds.y}, w=${bounds.width}, h=${bounds.height}</span>
-        <span>${roi.points.map((point) => `(${point.x}, ${point.y})`).join(" ")}</span>
+        <span>TL=(${bounds.x}, ${bounds.y}) BR=(${bounds.x + bounds.width}, ${bounds.y + bounds.height})</span>
       `;
       item.addEventListener("click", () => {
         state.activeIndex = index;
@@ -213,9 +197,10 @@
   function findHandle(point) {
     for (let roiIndex = 0; roiIndex < state.rois.length; roiIndex += 1) {
       const roi = state.rois[roiIndex];
-      for (let pointIndex = 0; pointIndex < roi.points.length; pointIndex += 1) {
-        if (pointDistance(point, roi.points[pointIndex]) <= HANDLE_RADIUS + 2) {
-          return { roiIndex, pointIndex };
+      const handles = diagonalHandles(roi);
+      for (let handleIndex = 0; handleIndex < handles.length; handleIndex += 1) {
+        if (pointDistance(point, handles[handleIndex].point) <= HANDLE_RADIUS + 2) {
+          return { roiIndex, handleName: handles[handleIndex].name };
         }
       }
     }
@@ -267,7 +252,12 @@
     const point = canvasPoint(event);
 
     if (state.draggingHandle) {
-      state.rois[state.draggingHandle.roiIndex].points[state.draggingHandle.pointIndex] = point;
+      const roi = state.rois[state.draggingHandle.roiIndex];
+      const bounds = boundsFromPoints(roi.points);
+      const topLeft = { x: bounds.x, y: bounds.y };
+      const bottomRight = { x: bounds.x + bounds.width, y: bounds.y + bounds.height };
+      const fixedPoint = state.draggingHandle.handleName === "topLeft" ? bottomRight : topLeft;
+      roi.points = rectangleToPoints(normalizeRect(fixedPoint, point));
       renderRoiList();
       draw();
       return;

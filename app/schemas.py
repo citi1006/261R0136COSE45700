@@ -29,6 +29,27 @@ def normalize_points_counterclockwise(points: list["Point"]) -> list["Point"]:
     return sorted_points[start_index:] + sorted_points[:start_index]
 
 
+def normalize_points_to_rectangle(points: list["Point"]) -> list["Point"]:
+    if len(points) != 4:
+        raise ValueError("roi must contain exactly 4 points")
+
+    xs = [point.x for point in points]
+    ys = [point.y for point in points]
+    left = min(xs)
+    right = max(xs)
+    top = min(ys)
+    bottom = max(ys)
+    if left == right or top == bottom:
+        raise ValueError("roi rectangle must have non-zero width and height")
+
+    return [
+        Point(x=left, y=top),
+        Point(x=right, y=top),
+        Point(x=right, y=bottom),
+        Point(x=left, y=bottom),
+    ]
+
+
 @dataclass
 class Point:
     x: int
@@ -52,7 +73,7 @@ class ROI:
             raise ValueError(f"roi {self.name} must contain exactly 4 points")
         if len({(point.x, point.y) for point in self.points}) != 4:
             raise ValueError(f"roi {self.name} must contain 4 distinct points")
-        self.points = normalize_points_counterclockwise(self.points)
+        self.points = normalize_points_to_rectangle(self.points)
 
     @classmethod
     def from_rectangle(cls, name: str, x: int, y: int, width: int, height: int) -> "ROI":

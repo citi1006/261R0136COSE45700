@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="section">
+  <div class="section-head">
+    <h1>Person Masking</h1>
+  </div>
+</section>
+
+<section class="grid-two">
+  <section class="panel">
+    <form method="post" action="/person-mask" enctype="multipart/form-data" class="stack-gap">
+      <label>
+        <span>Analysis target image</span>
+        <input type="file" name="image_file" accept="image/*" required>
+      </label>
+
+      <button type="submit" class="primary-button">Run Segmentation Mask</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Mask Result</h2>
+    </div>
+    {% if mask_result %}
+    <dl class="result-grid">
+      <div>
+        <dt>Detected people</dt>
+        <dd>{{ mask_result.person_count }}</dd>
+      </div>
+      <div>
+        <dt>Masked pixels</dt>
+        <dd>{{ "%.2f"|format(mask_result.masked_pixel_ratio * 100) }}%</dd>
+      </div>
+    </dl>
+
+    <div class="image-compare">
+      <figure class="image-preview">
+        <img src="{{ mask_result.source_url }}" alt="Original image">
+        <figcaption>Original</figcaption>
+      </figure>
+      <figure class="image-preview">
+        <img src="{{ mask_result.masked_url }}" alt="Black person mask result">
+        <figcaption>Masked</figcaption>
+      </figure>
+    </div>
+
+    {% if mask_result.detections %}
+    <table class="table compact detection-table">
+      <thead>
+        <tr>
+          <th>Source</th>
+          <th>Score</th>
+          <th>Box</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for detection in mask_result.detections %}
+        <tr>
+          <td>{{ detection.source }}</td>
+          <td>{{ "%.2f"|format(detection.score) }}</td>
+          <td>{{ detection.x }}, {{ detection.y }}, {{ detection.width }} x {{ detection.height }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="helper">No person region detected. The saved result keeps the image unchanged.</p>
+    {% endif %}
+    {% else %}
+    <p class="helper">Upload an image to generate a black mask for detected person regions.</p>
+    {% endif %}
+  </section>
+</section>
+{% endblock %}

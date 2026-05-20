@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+{% block content %}
+{% set restaurant_prompt_active = (selected_prompt_profile or "restaurant") == "restaurant" %}
+<section class="section">
+  <div class="section-head">
+    <h1>청결도 검사</h1>
+    <p>고정 CCTV 이미지와 ROI를 선택해 해당 영역의 물체 목록과 청결도를 OpenAI로 평가합니다.</p>
+  </div>
+</section>
+
+<section class="grid-two">
+  <section class="panel">
+    <form method="post" action="/cleanliness" enctype="multipart/form-data" class="stack-gap" id="cleanliness-form">
+      <label>
+        <span>CCTV 설정</span>
+        <select name="config_id" id="cleanliness-config-select" required>
+          <option value="">선택</option>
+          {% for config in configs %}
+          <option
+            value="{{ config.config_id }}"
+            {% if selected_config and selected_config.config_id == config.config_id %}selected{% endif %}>
+            {{ config.store_name }} / {{ config.cctv_nickname }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>
+        <span>ROI</span>
+        <select name="roi_name" id="cleanliness-roi-select" required></select>
+      </label>
+
+      <label>
+        <span>검사 대상 이미지</span>
+        <input type="file" name="image_file" accept="image/*" required>
+      </label>
+
+      <div class="prompt-toggle-row">
+        <input
+          type="hidden"
+          name="prompt_profile"
+          id="cleanliness-prompt-profile"
+          value="{{ selected_prompt_profile or 'restaurant' }}">
+        <button
+          type="button"
+          class="secondary-button prompt-toggle {% if restaurant_prompt_active %}active{% endif %}"
+          id="restaurant-prompt-toggle"
+          aria-pressed="{{ 'true' if restaurant_prompt_active else 'false' }}">
+          식당 특화 프롬프트
+        </button>
+      </div>
+
+      <button type="submit" class="primary-button">ROI 청결도 검사 실행</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>검사 결과</h2>
+    </div>
+    {% if cleanliness_result %}
+    <div class="result-card">
+      <div class="result-topline">
+        <span class="status unknown">{{ cleanliness_result.score }} / 5</span>
+        <strong>{{ cleanliness_result.store_name }} / {{ cleanliness_result.cctv_nickname }} / {{ cleanliness_result.roi_name }}</strong>
+      </div>
+
+      <dl class="result-grid">
+        <div>
+          <dt>청결도 점수</dt>
+          <dd class="score-large">{{ cleanliness_result.score }} / 5</dd>
+        </div>
+        <div>
+          <dt>신뢰도</dt>
+          <dd>{{ "%.0f"|format(cleanliness_result.confidence * 100) }}%</dd>
+        </div>
+      </dl>
+
+      <div class="score-meter" aria-label="청결도 점수">
+        {% for step in range(1, 6) %}
+        <span class="score-step {% if step <= cleanliness_result.score %}active{% endif %}"></span>
+        {% endfor %}
+      </div>
+
+      <p class="result-summary">{{ cleanliness_result.summary }}</p>
+
+      {% if cleanliness_result.findings %}
+      <table class="table compact">
+        <thead>
+          <tr>
+            <th>판단 근거</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for finding in cleanliness_result.findings %}
+          <tr>
+            <td>{{ finding }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+
+      {% if cleanliness_result.exact_objects or cleanliness_result.estimated_objects %}
+      <div class="image-compare">
+        <table class="table compact">
+          <thead>
+            <tr>
+              <th>정확히 식별 가능한 물체</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for object_name in cleanliness_result.exact_objects %}
+            <tr>
+              <td>{{ object_name }}</td>
+            </tr>
+            {% else %}
+            <tr>
+              <td>없음</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <table class="table compact">
+          <thead>
+            <tr>
+              <th>합리적으로 추정 가능한 물체</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for object_name in cleanliness_result.estimated_objects %}
+            <tr>
+              <td>{{ object_name }}</td>
+            </tr>
+            {% else %}
+            <tr>
+              <td>없음</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+
+      <div class="image-compare">
+        <figure class="image-preview">
+          <img src="{{ cleanliness_result.source_url }}" alt="청결도 검사 원본 이미지">
+          <figcaption>업로드 이미지</figcaption>
+        </figure>
+        <figure class="image-preview">
+          <img src="{{ cleanliness_result.crop_url }}" alt="{{ cleanliness_result.roi_name }} ROI crop">
+          <figcaption>ROI crop</figcaption>
+        </figure>
+      </div>
+
+      <figure class="image-preview single-preview">
+        <img src="{{ cleanliness_result.llm_input_url }}" alt="{{ cleanliness_result.roi_name }} ROI crop sent to OpenAI">
+        <figcaption>OpenAI 입력 ROI crop</figcaption>
+      </figure>
+    </div>
+    {% else %}
+    <p class="helper">CCTV 설정과 ROI를 선택한 뒤 이미지를 업로드하면, 선택한 ROI 영역만 crop해서 OpenAI에게 물체 목록과 청결도 점수를 요청합니다.</p>
+    {% endif %}
+  </section>
+</section>
+
+<script>
+  const cleanlinessConfigs = {{ configs_payload|tojson }};
+  const selectedCleanlinessConfigId = "{{ selected_config.config_id if selected_config else '' }}";
+  const selectedCleanlinessRoiName = "{{ selected_roi_name or '' }}";
+  const cleanlinessConfigSelect = document.getElementById("cleanliness-config-select");
+  const cleanlinessRoiSelect = document.getElementById("cleanliness-roi-select");
+  const cleanlinessPromptProfile = document.getElementById("cleanliness-prompt-profile");
+  const restaurantPromptToggle = document.getElementById("restaurant-prompt-toggle");
+
+  function renderCleanlinessRois(configId) {
+    cleanlinessRoiSelect.innerHTML = "";
+    const selected = cleanlinessConfigs.find((item) => item.config_id === configId);
+    if (!selected) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "먼저 CCTV 설정 선택";
+      cleanlinessRoiSelect.appendChild(option);
+      return;
+    }
+
+    selected.areas.forEach((area) => {
+      const option = document.createElement("option");
+      option.value = area.name;
+      const pointSummary = (area.points || []).map((point) => `(${point.x}, ${point.y})`).join(" ");
+      option.textContent = `${area.name} ${pointSummary}`;
+      if (area.name === selectedCleanlinessRoiName) {
+        option.selected = true;
+      }
+      cleanlinessRoiSelect.appendChild(option);
+    });
+  }
+
+  cleanlinessConfigSelect.addEventListener("change", (event) => renderCleanlinessRois(event.target.value));
+  renderCleanlinessRois(selectedCleanlinessConfigId || cleanlinessConfigSelect.value);
+
+  function renderRestaurantPromptToggle() {
+    const active = cleanlinessPromptProfile.value === "restaurant";
+    restaurantPromptToggle.classList.toggle("active", active);
+    restaurantPromptToggle.setAttribute("aria-pressed", active ? "true" : "false");
+  }
+
+  restaurantPromptToggle.addEventListener("click", () => {
+    cleanlinessPromptProfile.value = cleanlinessPromptProfile.value === "restaurant" ? "general" : "restaurant";
+    renderRestaurantPromptToggle();
+  });
+  renderRestaurantPromptToggle();
+</script>
+{% endblock %}

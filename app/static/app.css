@@ -163,7 +163,7 @@ a {
 }
 
 .filter-grid {
-  grid-template-columns: repeat(5, minmax(0, 1fr)) 180px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   align-items: end;
 }
 
@@ -176,7 +176,8 @@ label {
 input[type="text"],
 input[type="number"],
 input[type="file"],
-select {
+select,
+textarea {
   width: 100%;
   border: 1px solid #cbd5e1;
   border-radius: 6px;
@@ -185,11 +186,35 @@ select {
   background: #ffffff;
 }
 
+textarea {
+  resize: vertical;
+  min-height: 180px;
+  font-family: Consolas, "Courier New", monospace;
+  line-height: 1.45;
+}
+
 .checkbox-row {
   display: flex;
   align-items: center;
   gap: 10px;
   padding-top: 24px;
+}
+
+.no-top-pad {
+  padding-top: 0;
+}
+
+.prompt-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.prompt-toggle.active {
+  background: #dcfce7;
+  border-color: #16a34a;
+  color: #14532d;
+  font-weight: 600;
 }
 
 .editor-toolbar {
@@ -350,6 +375,16 @@ select {
   color: #92400e;
 }
 
+.status.cleaned_likely {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.status.needs_check {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 .result-card {
   border: 1px solid #d1d5db;
   border-radius: 8px;
@@ -387,15 +422,77 @@ select {
   line-height: 1.5;
 }
 
+.subhead {
+  margin: 18px 0 10px;
+  font-size: 16px;
+}
+
+.score-large {
+  font-size: 28px;
+}
+
+.score-meter {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 16px;
+}
+
+.score-step {
+  height: 10px;
+  border-radius: 999px;
+  background: #e5e7eb;
+}
+
+.score-step.active {
+  background: #111827;
+}
+
 .filter-actions {
   display: flex;
   gap: 8px;
+}
+
+.image-compare {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.image-preview {
+  margin: 0;
+}
+
+.image-preview img {
+  display: block;
+  width: 100%;
+  max-height: 520px;
+  object-fit: contain;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #f9fafb;
+}
+
+.image-preview figcaption {
+  margin-top: 8px;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.single-preview {
+  margin-top: 16px;
+}
+
+.detection-table {
+  margin-top: 16px;
 }
 
 @media (max-width: 980px) {
   .grid-two,
   .wide-left,
   .editor-layout,
+  .image-compare,
   .form-grid,
   .filter-grid,
   .metrics-grid {

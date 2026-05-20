@@ -4,7 +4,7 @@ import json
 import mimetypes
 import shutil
 import tempfile
-import time
+import base64
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -12,19 +12,16 @@ from typing import Any
 
 import cv2
 import numpy as np
-from google import genai
-from google.genai import types
+from openai import OpenAI
 
 from app.config import (
     ANALYSIS_CROP_DIR,
     BRIGHTNESS_MISMATCH_THRESHOLD,
     DARKNESS_THRESHOLD,
-    GEMINI_API_KEY,
-    GEMINI_FILE_POLL_INTERVAL_SECONDS,
-    GEMINI_FILE_POLL_TIMEOUT_SECONDS,
-    GEMINI_MODEL,
     MAX_VISIBILITY_SAMPLE_STEP_FRAMES,
     OCCLUSION_THRESHOLD,
+    OPENAI_API_KEY,
+    OPENAI_MODEL,
     PERSISTENT_MISMATCH_SECONDS,
     UNKNOWN_CONFIDENCE_THRESHOLD,
     VISIBILITY_SAMPLE_SECONDS,
@@ -77,6 +74,11 @@ def guess_mime_type(path: Path) -> str:
     return "application/octet-stream"
 
 
+def file_data_url(path: Path) -> str:
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{guess_mime_type(path)};base64,{encoded}"
+
+
 def open_video_capture(video_path: Path) -> tuple[cv2.VideoCapture, Path | None]:
     temp_copy: Path | None = None
     capture = cv2.VideoCapture(str(video_path))
@@ -93,14 +95,9 @@ def open_video_capture(video_path: Path) -> tuple[cv2.VideoCapture, Path | None]
 
 def ordered_points(roi: ROI) -> np.ndarray:
     points = np.array(roi.point_pairs(), dtype=np.float32)
-    sums = points.sum(axis=1)
-    diffs = np.diff(points, axis=1).reshape(-1)
-
-    top_left = points[np.argmin(sums)]
-    bottom_right = points[np.argmax(sums)]
-    top_right = points[np.argmin(diffs)]
-    bottom_left = points[np.argmax(diffs)]
-    return np.array([top_left, top_right, bottom_right, bottom_left], dtype=np.float32)
+    if len({tuple(point) for point in points.tolist()}) != 4:
+        raise ValueError(f"roi {roi.name} must contain 4 distinct points")
+    return points
 
 
 def warp_roi(image: np.ndarray, roi: ROI) -> np.ndarray:
@@ -218,6 +215,43 @@ def build_cropped_video_file(video_path: Path, roi: ROI) -> Path:
     return output_path
 
 
+def build_cropped_video_contact_sheet_file(video_path: Path, roi: ROI, max_frames: int = 8) -> Path:
+    frames, _ = sample_video_frames(video_path)
+    if not frames:
+        raise ValueError(f"video contains no readable frames: {video_path}")
+
+    frame_count = min(max_frames, len(frames))
+    indices = sorted({int(round(value)) for value in np.linspace(0, len(frames) - 1, frame_count)})
+    crops = [crop_roi(frames[index], roi) for index in indices]
+
+    target_height = 360
+    resized: list[np.ndarray] = []
+    for crop in crops:
+        height, width = crop.shape[:2]
+        scale = target_height / max(height, 1)
+        target_width = max(8, int(round(width * scale)))
+        interpolation = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
+        resized.append(cv2.resize(crop, (target_width, target_height), interpolation=interpolation))
+
+    columns = min(4, len(resized))
+    rows = (len(resized) + columns - 1) // columns
+    cell_width = max(image.shape[1] for image in resized)
+    sheet = np.full((rows * target_height, columns * cell_width, 3), 245, dtype=np.uint8)
+
+    for index, image in enumerate(resized):
+        row = index // columns
+        column = index % columns
+        x = column * cell_width + (cell_width - image.shape[1]) // 2
+        y = row * target_height
+        sheet[y : y + image.shape[0], x : x + image.shape[1]] = image
+
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix=f"mvp1_{roi.name.lower()}_frames_")
+    output_path = Path(temp_file.name)
+    temp_file.close()
+    write_image(output_path, sheet)
+    return output_path
+
+
 @dataclass
 class ValidationResult:
     media_type: str
@@ -254,69 +288,112 @@ VISIBILITY_ANALYSIS_SCHEMA: dict[str, Any] = {
 
 
 @dataclass
-class GeminiVisibilityAssessment:
+class OpenAIVisibilityAssessment:
     human_body_ratio: float
     summary: str
 
 
-class GeminiFileClient:
+class OpenAIModelClient:
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = GEMINI_MODEL,
-        client: genai.Client | None = None,
+        model: str = OPENAI_MODEL,
+        client: OpenAI | None = None,
     ) -> None:
-        self.api_key = api_key or GEMINI_API_KEY
+        self.api_key = api_key or OPENAI_API_KEY
         self.model = model
         self.client = client
-        self.poll_interval_seconds = GEMINI_FILE_POLL_INTERVAL_SECONDS
-        self.poll_timeout_seconds = GEMINI_FILE_POLL_TIMEOUT_SECONDS
 
-    def _get_client(self) -> genai.Client:
+    def _get_client(self) -> OpenAI:
         if self.client is None:
             if not self.api_key:
-                raise RuntimeError("GEMINI_API_KEY is required for Gemini-based analysis.")
-            self.client = genai.Client(api_key=self.api_key)
+                raise RuntimeError("OPENAI_API_KEY is required for OpenAI-based analysis.")
+            self.client = OpenAI(api_key=self.api_key)
         return self.client
 
-    def _upload_and_prepare_file(self, path: Path) -> types.File:
-        client = self._get_client()
-        uploaded = client.files.upload(
-            file=path,
-            config=types.UploadFileConfig(
-                mime_type=guess_mime_type(path),
-                display_name=path.name,
-            ),
+    def create_json_response(
+        self,
+        *,
+        prompt: str,
+        image_paths: list[Path],
+        schema_name: str,
+        schema: dict[str, Any],
+        temperature: float = 0.1,
+    ) -> dict[str, Any]:
+        content: list[dict[str, Any]] = [{"type": "input_text", "text": prompt}]
+        for image_path in image_paths:
+            content.append(
+                {
+                    "type": "input_image",
+                    "image_url": file_data_url(image_path),
+                    "detail": "high",
+                }
+            )
+
+        response = self._get_client().responses.create(
+            model=self.model,
+            input=[{"role": "user", "content": content}],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": schema_name,
+                    "schema": openai_json_schema(schema),
+                    "strict": True,
+                }
+            },
+            temperature=temperature,
         )
-        return self._wait_until_active(uploaded)
-
-    def _wait_until_active(self, uploaded_file: types.File) -> types.File:
-        client = self._get_client()
-        deadline = time.monotonic() + self.poll_timeout_seconds
-        current = uploaded_file
-
-        while True:
-            state = getattr(current, "state", None)
-            state_name = getattr(state, "name", None) if state is not None else None
-            if state_name in (None, "ACTIVE"):
-                return current
-            if state_name == "FAILED":
-                raise RuntimeError(f"Gemini file processing failed for {current.name}.")
-            if time.monotonic() >= deadline:
-                raise RuntimeError(f"Timed out waiting for Gemini file processing: {current.name}")
-            time.sleep(self.poll_interval_seconds)
-            current = client.files.get(name=current.name)
-
-    def _delete_file_quietly(self, uploaded_file: types.File | None) -> None:
-        if uploaded_file is None or not getattr(uploaded_file, "name", None):
-            return
-        try:
-            self._get_client().files.delete(name=uploaded_file.name)
-        except Exception:
-            pass
+        return parse_openai_json_response(response)
 
 
-class GeminiVisibilityClient(GeminiFileClient):
+def openai_json_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    def clean(value: Any) -> Any:
+        if isinstance(value, dict):
+            cleaned = {key: clean(item) for key, item in value.items() if key != "propertyOrdering"}
+            if cleaned.get("type") == "object":
+                cleaned.setdefault("additionalProperties", False)
+            return cleaned
+        if isinstance(value, list):
+            return [clean(item) for item in value]
+        return value
+
+    return clean(schema)
+
+
+def openai_output_text(response: Any) -> str:
+    output_text = getattr(response, "output_text", None)
+    if output_text:
+        return str(output_text)
+
+    if isinstance(response, dict):
+        text_value = response.get("output_text")
+        if text_value:
+            return str(text_value)
+        output_items = response.get("output", [])
+    else:
+        output_items = getattr(response, "output", [])
+
+    parts: list[str] = []
+    for item in output_items or []:
+        content_items = item.get("content", []) if isinstance(item, dict) else getattr(item, "content", [])
+        for content in content_items or []:
+            if isinstance(content, dict):
+                text = content.get("text")
+            else:
+                text = getattr(content, "text", None)
+            if text:
+                parts.append(str(text))
+    return "".join(parts)
+
+
+def parse_openai_json_response(response: Any) -> dict[str, Any]:
+    text = openai_output_text(response).strip()
+    if not text:
+        raise RuntimeError("OpenAI response did not include text output.")
+    return json.loads(text)
+
+
+class OpenAIVisibilityClient(OpenAIModelClient):
     def analyze_visibility(
         self,
         *,
@@ -324,14 +401,12 @@ class GeminiVisibilityClient(GeminiFileClient):
         media_type: str,
         roi_name: str,
         source_path: Path | None = None,
-    ) -> GeminiVisibilityAssessment:
+    ) -> OpenAIVisibilityAssessment:
         _ = source_path
-        client = self._get_client()
-        media_file: types.File | None = None
 
         prompt = (
             "You are validating whether a cropped store ROI is blocked by people.\n"
-            f"The provided file is a cropped ROI {media_type} for ROI named {roi_name}.\n"
+            f"The provided image is a cropped ROI {media_type} for ROI named {roi_name}.\n"
             "Estimate only how much of the ROI area is occupied by visible human body parts.\n"
             "Count head, face, hair, torso, arms, hands, legs, feet, and clothing worn by a person.\n"
             "Do not count posters, POP materials, shelves, products, counters, walls, reflections, or any static fixture as occlusion.\n"
@@ -339,46 +414,34 @@ class GeminiVisibilityClient(GeminiFileClient):
             "Return only JSON."
         )
 
-        try:
-            media_file = self._upload_and_prepare_file(cropped_media_path)
-            response = client.models.generate_content(
-                model=self.model,
-                contents=[prompt, media_file],
-                config=types.GenerateContentConfig(
-                    temperature=0.1,
-                    response_mime_type="application/json",
-                    response_json_schema=VISIBILITY_ANALYSIS_SCHEMA,
-                ),
-            )
+        payload = self.create_json_response(
+            prompt=prompt,
+            image_paths=[cropped_media_path],
+            schema_name="visibility_analysis",
+            schema=VISIBILITY_ANALYSIS_SCHEMA,
+            temperature=0.1,
+        )
 
-            payload = response.parsed
-            if payload is None:
-                payload = json.loads(response.text)
-            elif hasattr(payload, "model_dump"):
-                payload = payload.model_dump()
-
-            human_body_ratio = float(np.clip(float(payload["human_body_ratio"]), 0.0, 1.0))
-            summary = str(payload["summary"])
-            return GeminiVisibilityAssessment(human_body_ratio=human_body_ratio, summary=summary)
-        finally:
-            self._delete_file_quietly(media_file)
+        human_body_ratio = float(np.clip(float(payload["human_body_ratio"]), 0.0, 1.0))
+        summary = str(payload["summary"])
+        return OpenAIVisibilityAssessment(human_body_ratio=human_body_ratio, summary=summary)
 
 
 class VideoValidator:
-    def __init__(self, visibility_client: GeminiVisibilityClient | None = None) -> None:
+    def __init__(self, visibility_client: OpenAIVisibilityClient | None = None) -> None:
         self.visibility_threshold = VISIBILITY_THRESHOLD
         self.occlusion_threshold = OCCLUSION_THRESHOLD
         self.darkness_threshold = DARKNESS_THRESHOLD
         self.brightness_mismatch_threshold = BRIGHTNESS_MISMATCH_THRESHOLD
         self.persistent_mismatch_seconds = PERSISTENT_MISMATCH_SECONDS
-        self.visibility_client = visibility_client or GeminiVisibilityClient()
+        self.visibility_client = visibility_client or OpenAIVisibilityClient()
 
     def _assess_frame_visibility(
         self,
         current_crop: np.ndarray,
         roi: ROI,
         source_path: Path | None = None,
-    ) -> GeminiVisibilityAssessment:
+    ) -> OpenAIVisibilityAssessment:
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix=f"mvp1_{roi.name.lower()}_visibility_")
         cropped_frame_path = Path(temp_file.name)
         temp_file.close()
@@ -499,7 +562,7 @@ class VideoValidator:
         summary = (
             f"ROI {roi.name} video human_clear_ratio={visible_ratio:.2f}, human_body_ratio={1.0 - visible_ratio:.2f}, "
             f"occlusion_seconds={occlusion_duration:.1f}, brightness={average_brightness:.2f}; "
-            f"Gemini human-body occlusion: {visibility_summaries[0] if visibility_summaries else 'n/a'}"
+            f"OpenAI human-body occlusion: {visibility_summaries[0] if visibility_summaries else 'n/a'}"
         )
 
         return ValidationResult(
@@ -558,75 +621,57 @@ POP_ANALYSIS_SCHEMA: dict[str, Any] = {
 
 
 @dataclass
-class GeminiPopAssessment:
+class OpenAIPopAssessment:
     status: str
     confidence: float
     summary: str
 
 
-class GeminiPopClient:
+class OpenAIPopClient(OpenAIModelClient):
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = GEMINI_MODEL,
-        client: genai.Client | None = None,
+        model: str = OPENAI_MODEL,
+        client: OpenAI | None = None,
     ) -> None:
-        self.base_client = GeminiFileClient(api_key=api_key, model=model, client=client)
-        self.model = self.base_client.model
+        super().__init__(api_key=api_key, model=model, client=client)
 
-    def analyze_pop(self, *, poster_template_path: Path, cropped_media_path: Path, media_type: str) -> GeminiPopAssessment:
-        client = self.base_client._get_client()
-        template_file: types.File | None = None
-        media_file: types.File | None = None
-
+    def analyze_pop(self, *, poster_template_path: Path, cropped_media_path: Path, media_type: str) -> OpenAIPopAssessment:
         prompt = (
             "You are verifying whether a target promotional poster is present in a store ROI.\n"
-            "The first file is the target poster template.\n"
-            f"The second file is the cropped ROI {media_type} from the store.\n"
+            "The first image is the target poster template.\n"
+            f"The second image is the cropped ROI {media_type} from the store.\n"
             "Return Present only if the same target poster is visibly present.\n"
             "Return Absent only if the ROI media is clear enough and the poster is not visible.\n"
-            "Return Unknown if the ROI media is too dark, blurry, occluded, too brief, or uncertain.\n"
-            "Use only visual evidence from the provided files."
+            "Return Unknown if the ROI media is too dark, blurry, occluded, too brief, sampled unevenly, or uncertain.\n"
+            "Use only visual evidence from the provided images.\n"
+            "Return only JSON."
         )
 
-        try:
-            template_file = self.base_client._upload_and_prepare_file(poster_template_path)
-            media_file = self.base_client._upload_and_prepare_file(cropped_media_path)
-            response = client.models.generate_content(
-                model=self.model,
-                contents=[prompt, template_file, media_file],
-                config=types.GenerateContentConfig(
-                    temperature=0.1,
-                    response_mime_type="application/json",
-                    response_json_schema=POP_ANALYSIS_SCHEMA,
-                ),
-            )
+        payload = self.create_json_response(
+            prompt=prompt,
+            image_paths=[poster_template_path, cropped_media_path],
+            schema_name="pop_analysis",
+            schema=POP_ANALYSIS_SCHEMA,
+            temperature=0.1,
+        )
 
-            payload = response.parsed
-            if payload is None:
-                payload = json.loads(response.text)
-            elif hasattr(payload, "model_dump"):
-                payload = payload.model_dump()
-
-            status = str(payload["status"])
-            confidence = float(payload["confidence"])
-            summary = str(payload["summary"])
-            if status not in {"Present", "Absent", "Unknown"}:
-                raise RuntimeError(f"Gemini returned invalid POP status: {status}")
-            return GeminiPopAssessment(
-                status=status,
-                confidence=float(np.clip(confidence, 0.0, 1.0)),
-                summary=summary,
-            )
-        finally:
-            self.base_client._delete_file_quietly(media_file)
-            self.base_client._delete_file_quietly(template_file)
+        status = str(payload["status"])
+        confidence = float(payload["confidence"])
+        summary = str(payload["summary"])
+        if status not in {"Present", "Absent", "Unknown"}:
+            raise RuntimeError(f"OpenAI returned invalid POP status: {status}")
+        return OpenAIPopAssessment(
+            status=status,
+            confidence=float(np.clip(confidence, 0.0, 1.0)),
+            summary=summary,
+        )
 
 
 class QualityAnalyzer:
-    def __init__(self, gemini_client: GeminiPopClient | None = None) -> None:
+    def __init__(self, openai_client: OpenAIPopClient | None = None) -> None:
         self.unknown_confidence_threshold = UNKNOWN_CONFIDENCE_THRESHOLD
-        self.gemini_client = gemini_client or GeminiPopClient()
+        self.openai_client = openai_client or OpenAIPopClient()
 
     def analyze_pop(
         self,
@@ -645,7 +690,7 @@ class QualityAnalyzer:
                 summary=f"POP analysis skipped because the validator rejected ROI {roi.name}. {validation_result.summary}",
             )
 
-        assessment = self.gemini_client.analyze_pop(
+        assessment = self.openai_client.analyze_pop(
             poster_template_path=poster_template_path,
             cropped_media_path=cropped_media_path,
             media_type=media_type,
@@ -656,7 +701,7 @@ class QualityAnalyzer:
 
         if confidence < self.unknown_confidence_threshold and status != "Unknown":
             status = "Unknown"
-            summary = f"Gemini confidence was below threshold. {assessment.summary}"
+            summary = f"OpenAI confidence was below threshold. {assessment.summary}"
 
         return QualityResult(status=status, confidence=confidence, summary=summary)
 
@@ -705,13 +750,15 @@ class AnalysisService:
         try:
             if media_type == "image":
                 cropped_media_path = build_cropped_image_file(current_image, roi)
+                llm_media_type = media_type
             else:
-                cropped_media_path = build_cropped_video_file(media_path, roi)
+                cropped_media_path = build_cropped_video_contact_sheet_file(media_path, roi)
+                llm_media_type = "video frame contact sheet"
 
             quality = self.quality_analyzer.analyze_pop(
                 media_path=media_path,
                 cropped_media_path=cropped_media_path,
-                media_type=media_type,
+                media_type=llm_media_type,
                 roi=roi,
                 poster_template_path=poster_template_path,
                 validation_result=validation,

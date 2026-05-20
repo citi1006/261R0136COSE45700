@@ -7,7 +7,7 @@ from pathlib import Path
 from app.analysis import AnalysisService, QualityResult, VideoValidator
 from app.database import clear_results, fetch_results, init_db
 from app.roi_store import ConfigStore
-from app.schemas import Point, normalize_points_counterclockwise
+from app.schemas import Point, normalize_points_counterclockwise, normalize_points_to_rectangle
 from scripts.generate_test_data import generate_test_data
 
 
@@ -47,10 +47,10 @@ class FakeQualityAnalyzer:
             )
 
         if "present" in media_path.stem:
-            return QualityResult(status="Present", confidence=0.93, summary="fake gemini found the poster")
+            return QualityResult(status="Present", confidence=0.93, summary="fake openai found the poster")
         if "absent" in media_path.stem:
-            return QualityResult(status="Absent", confidence=0.89, summary="fake gemini did not find the poster")
-        return QualityResult(status="Unknown", confidence=0.41, summary="fake gemini was uncertain")
+            return QualityResult(status="Absent", confidence=0.89, summary="fake openai did not find the poster")
+        return QualityResult(status="Unknown", confidence=0.41, summary="fake openai was uncertain")
 
 
 class PipelineTest(unittest.TestCase):
@@ -108,7 +108,7 @@ class PipelineTest(unittest.TestCase):
         self.assertTrue(result["analysis_crop_url"].startswith("/data/analysis_crops/"))
         self.assertTrue(Path(result["analysis_crop_path"]).exists())
 
-    def test_store_catalog_and_polygon_rois(self) -> None:
+    def test_store_catalog_and_rectangular_rois(self) -> None:
         store_names = self.store.list_store_names()
         self.assertIn("StoreAlpha", store_names)
         self.assertIn("StoreBeta", store_names)
@@ -117,6 +117,16 @@ class PipelineTest(unittest.TestCase):
         roi = self.store.get_roi(config.config_id, "POP")
         self.assertEqual(len(roi.points), 4)
         self.assertEqual(len({(point.x, point.y) for point in roi.points}), 4)
+        bounds = roi.bounds
+        self.assertEqual(
+            roi.point_pairs(),
+            [
+                (bounds["x"], bounds["y"]),
+                (bounds["x"] + bounds["width"], bounds["y"]),
+                (bounds["x"] + bounds["width"], bounds["y"] + bounds["height"]),
+                (bounds["x"], bounds["y"] + bounds["height"]),
+            ],
+        )
 
     def test_point_order_is_normalized_counterclockwise(self) -> None:
         points = [
@@ -129,6 +139,19 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(
             [(point.x, point.y) for point in normalized],
             [(90, 190), (220, 210), (240, 70), (120, 80)],
+        )
+
+    def test_points_can_be_normalized_to_rectangle(self) -> None:
+        points = [
+            Point(x=2, y=870),
+            Point(x=270, y=875),
+            Point(x=527, y=711),
+            Point(x=281, y=703),
+        ]
+        normalized = normalize_points_to_rectangle(points)
+        self.assertEqual(
+            [(point.x, point.y) for point in normalized],
+            [(2, 703), (527, 703), (527, 875), (2, 875)],
         )
 
 

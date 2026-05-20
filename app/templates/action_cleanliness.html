@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="section">
+  <div class="section-head">
+    <h1>Action 청결도</h1>
+    <p>결제 이후 직원 배지 동선으로 테이블 청소 수행 가능성을 판단합니다.</p>
+  </div>
+</section>
+
+<section class="grid-two">
+  <section class="panel">
+    <form method="post" action="/action-cleanliness" class="stack-gap" id="action-cleanliness-form">
+      <label>
+        <span>CCTV 설정</span>
+        <select name="config_id" id="action-config-select" required>
+          <option value="">선택</option>
+          {% for config in configs %}
+          <option
+            value="{{ config.config_id }}"
+            {% if selected_config and selected_config.config_id == config.config_id %}selected{% endif %}>
+            {{ config.store_name }} / {{ config.cctv_nickname }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>
+        <span>테이블 ROI</span>
+        <select name="roi_name" id="action-roi-select" required></select>
+      </label>
+
+      <label>
+        <span>테이블 근접 반경(px)</span>
+        <input type="number" name="near_margin" min="10" max="300" step="5" value="{{ near_margin or 80 }}" required>
+      </label>
+
+      <label>
+        <span>결제 이후 직원 배지 동선 JSON</span>
+        <textarea name="trajectory_json" rows="12" required>{{ trajectory_json or sample_trajectory_json }}</textarea>
+      </label>
+
+      <label class="checkbox-row no-top-pad">
+        <input type="checkbox" name="manual_confirmed" value="true" {% if manual_confirmed %}checked{% endif %}>
+        <span>직원이 테이블 청소 완료를 수동 확인함</span>
+      </label>
+
+      <button type="submit" class="primary-button">동선 기반 청결도 검사 실행</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>판정 결과</h2>
+    </div>
+    {% if action_result %}
+    <div class="result-card">
+      <div class="result-topline">
+        <span class="status {% if action_result.decision == 'cleaned_likely' %}present{% elif action_result.decision == 'needs_check' %}absent{% else %}unknown{% endif %}">
+          {{ action_result.decision }}
+        </span>
+        <strong>{{ action_result.store_name }} / {{ action_result.cctv_nickname }} / {{ action_result.roi_name }}</strong>
+      </div>
+
+      <dl class="result-grid">
+        <div>
+          <dt>신뢰도</dt>
+          <dd>{{ "%.0f"|format(action_result.confidence * 100) }}%</dd>
+        </div>
+        <div>
+          <dt>테이블 주변 체류</dt>
+          <dd>{{ action_result.features.dwell_seconds }}초</dd>
+        </div>
+        <div>
+          <dt>청소 완료 기준</dt>
+          <dd>35초 이상</dd>
+        </div>
+        <div>
+          <dt>확인 필요 기준</dt>
+          <dd>15초 미만</dd>
+        </div>
+      </dl>
+
+      <p class="result-summary">{{ action_result.summary }}</p>
+
+      <table class="table compact">
+        <thead>
+          <tr>
+            <th>동선 근거</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in action_result.evidence %}
+          <tr>
+            <td>{{ item }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <table class="table compact detection-table">
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for key, value in action_result.features.items() %}
+          <tr>
+            <td>{{ key }}</td>
+            <td>{{ value }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="helper">테이블 ROI와 결제 이후 직원 배지 동선을 입력하면, 테이블 주변 체류 시간만으로 청소 수행 가능성을 계산합니다.</p>
+    {% endif %}
+  </section>
+</section>
+
+<script>
+  const actionConfigs = {{ configs_payload|tojson }};
+  const selectedActionConfigId = "{{ selected_config.config_id if selected_config else '' }}";
+  const selectedActionRoiName = "{{ selected_roi_name or '' }}";
+  const actionConfigSelect = document.getElementById("action-config-select");
+  const actionRoiSelect = document.getElementById("action-roi-select");
+
+  function renderActionRois(configId) {
+    actionRoiSelect.innerHTML = "";
+    const selected = actionConfigs.find((item) => item.config_id === configId);
+    if (!selected) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "먼저 CCTV 설정 선택";
+      actionRoiSelect.appendChild(option);
+      return;
+    }
+
+    selected.areas.forEach((area) => {
+      const option = document.createElement("option");
+      option.value = area.name;
+      const pointSummary = (area.points || []).map((point) => `(${point.x}, ${point.y})`).join(" ");
+      option.textContent = `${area.name} ${pointSummary}`;
+      if (area.name === selectedActionRoiName) {
+        option.selected = true;
+      }
+      actionRoiSelect.appendChild(option);
+    });
+  }
+
+  actionConfigSelect.addEventListener("change", (event) => renderActionRois(event.target.value));
+  renderActionRois(selectedActionConfigId || actionConfigSelect.value);
+</script>
+{% endblock %}

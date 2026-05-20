@@ -4,5 +4,8 @@ python-multipart
 opencv-python-headless
 numpy
 Pillow
-google-genai
+torch
+torchvision
+transformers
+openai
 python-dotenv
