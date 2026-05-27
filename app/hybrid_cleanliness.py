@@ -61,6 +61,7 @@ def build_hybrid_cleanliness_result(
         if action_result is None:
             action_result = ActionCleanlinessResult(
                 decision=ACTION_DECISION_UNKNOWN,
+                score=1,
                 confidence=0.0,
                 summary="물체 기반 청결도 신뢰도가 낮지만 Action 동선 평가 입력이 없어 최종 판단을 보류했습니다.",
                 evidence=["물체 기반 confidence가 임계치보다 낮습니다.", "Action trajectory가 제공되지 않았습니다."],

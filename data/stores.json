@@ -1,5 +1,6 @@
 {
   "stores": [
+    "MobileStore",
     "StoreAlpha",
     "StoreBeta"
   ]

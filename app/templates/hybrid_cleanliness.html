@@ -179,6 +179,10 @@
           <dd>{{ hybrid_result.action_result.decision }}</dd>
         </div>
         <div>
+          <dt>Action 점수</dt>
+          <dd>{{ hybrid_result.action_result.score }} / 5</dd>
+        </div>
+        <div>
           <dt>Action 신뢰도</dt>
           <dd>{{ "%.0f"|format(hybrid_result.action_result.confidence * 100) }}%</dd>
         </div>

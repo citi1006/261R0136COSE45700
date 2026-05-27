@@ -1,0 +1,91 @@
+{
+  "store_name": "MobileStore",
+  "cctv_nickname": "MountedPhone",
+  "cctv_id": "MobileStore::MountedPhone",
+  "config_id": "MobileStore_MountedPhone",
+  "reference_image_path": "reference_images/MobileStore_MountedPhone.png",
+  "areas": [
+    {
+      "name": "TABLE_1",
+      "points": [
+        {
+          "x": 12,
+          "y": 12
+        },
+        {
+          "x": 1280,
+          "y": 12
+        },
+        {
+          "x": 1280,
+          "y": 720
+        },
+        {
+          "x": 12,
+          "y": 720
+        }
+      ],
+      "bounds": {
+        "x": 12,
+        "y": 12,
+        "width": 1268,
+        "height": 708
+      }
+    },
+    {
+      "name": "TABLE_2",
+      "points": [
+        {
+          "x": 373,
+          "y": 310
+        },
+        {
+          "x": 1064,
+          "y": 310
+        },
+        {
+          "x": 1064,
+          "y": 593
+        },
+        {
+          "x": 373,
+          "y": 593
+        }
+      ],
+      "bounds": {
+        "x": 373,
+        "y": 310,
+        "width": 691,
+        "height": 283
+      }
+    },
+    {
+      "name": "TABLE_3",
+      "points": [
+        {
+          "x": 13,
+          "y": 12
+        },
+        {
+          "x": 1280,
+          "y": 12
+        },
+        {
+          "x": 1280,
+          "y": 720
+        },
+        {
+          "x": 13,
+          "y": 720
+        }
+      ],
+      "bounds": {
+        "x": 13,
+        "y": 12,
+        "width": 1267,
+        "height": 708
+      }
+    }
+  ],
+  "created_at": "2026-05-27T19:13:56"
+}

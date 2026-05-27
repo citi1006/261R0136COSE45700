@@ -61,6 +61,56 @@ def init_db() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS owner_accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.commit()
+
+
+def count_owner_accounts() -> int:
+    with closing(get_connection()) as connection:
+        return int(connection.execute("SELECT COUNT(*) FROM owner_accounts").fetchone()[0])
+
+
+def fetch_owner_account(user_id: str) -> dict[str, Any] | None:
+    with closing(get_connection()) as connection:
+        row = connection.execute(
+            "SELECT * FROM owner_accounts WHERE user_id = :user_id",
+            {"user_id": user_id},
+        ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def insert_owner_account(user_id: str, password_hash: str) -> int:
+    now = datetime.now().isoformat(timespec="seconds")
+    with closing(get_connection()) as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO owner_accounts (user_id, password_hash, created_at, updated_at)
+            VALUES (:user_id, :password_hash, :created_at, :updated_at)
+            """,
+            {
+                "user_id": user_id,
+                "password_hash": password_hash,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        connection.commit()
+        return int(cursor.lastrowid)
+
+
+def clear_owner_accounts() -> None:
+    with closing(get_connection()) as connection:
+        connection.execute("DELETE FROM owner_accounts")
         connection.commit()
 
 
@@ -176,9 +226,9 @@ def bulk_insert(records: Iterable[dict[str, Any]]) -> None:
         connection.commit()
 
 
-def insert_cleanliness_result(record: dict[str, Any]) -> None:
+def insert_cleanliness_result(record: dict[str, Any]) -> int:
     with closing(get_connection()) as connection:
-        connection.execute(
+        cursor = connection.execute(
             """
             INSERT INTO cleanliness_results (
                 analyzed_at, store_name, cctv_id, cctv_nickname, roi_name,
@@ -194,6 +244,39 @@ def insert_cleanliness_result(record: dict[str, Any]) -> None:
             )
             """,
             record,
+        )
+        connection.commit()
+        return int(cursor.lastrowid)
+
+
+def update_cleanliness_result(record_id: int, updates: dict[str, Any]) -> None:
+    allowed_columns = {
+        "decision",
+        "score",
+        "confidence",
+        "final_stage",
+        "summary",
+        "source_path",
+        "crop_path",
+        "exact_objects",
+        "estimated_objects",
+        "findings",
+        "action_features",
+    }
+    assignments: list[str] = []
+    params: dict[str, Any] = {"id": record_id}
+    for key, value in updates.items():
+        if key not in allowed_columns:
+            continue
+        assignments.append(f"{key} = :{key}")
+        params[key] = value
+    if not assignments:
+        return
+
+    with closing(get_connection()) as connection:
+        connection.execute(
+            f"UPDATE cleanliness_results SET {', '.join(assignments)} WHERE id = :id",
+            params,
         )
         connection.commit()
 

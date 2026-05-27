@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mobile Cleanliness Capture</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <section class="auth-panel" id="auth-panel">
+      <form class="auth-card" id="auth-form">
+        <p class="eyebrow">Store Owner</p>
+        <h1 id="auth-title">로그인</h1>
+        <label>
+          <span>아이디</span>
+          <input id="auth-user-id-input" type="text" autocomplete="username" required>
+        </label>
+        <label>
+          <span>비밀번호</span>
+          <input id="auth-password-input" type="password" autocomplete="current-password" required>
+        </label>
+        <button class="primary-button full-width" id="auth-submit-button" type="submit">로그인</button>
+        <p class="auth-message" id="auth-message"></p>
+      </form>
+    </section>
+
+    <main class="app-shell hidden" id="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Mobile Capture</p>
+          <h1>청결도 영상 촬영</h1>
+        </div>
+        <div class="topbar-actions">
+          <span class="status-pill" id="secure-status">대기</span>
+          <button class="ghost-button" id="logout-button" type="button">로그아웃</button>
+        </div>
+      </header>
+
+      <section class="capture-layout">
+        <section class="preview-panel">
+          <div class="video-frame" id="video-frame">
+            <video id="camera-preview" autoplay playsinline muted></video>
+            <div class="roi-layer" id="roi-layer"></div>
+            <div class="empty-preview" id="empty-preview">
+              <strong>카메라 대기</strong>
+              <span id="camera-message">스트림 없음</span>
+            </div>
+            <div class="recording-badge" id="recording-badge">REC</div>
+          </div>
+
+          <div class="capture-actions">
+            <button class="primary-button" id="open-camera-button" type="button">카메라 열기</button>
+            <button class="secondary-button" id="start-upload-button" type="button" disabled>촬영 업로드 시작</button>
+            <button class="danger-button" id="stop-button" type="button" disabled>중지</button>
+          </div>
+        </section>
+
+        <aside class="control-panel">
+          <div class="tab-row" role="tablist" aria-label="작업 선택">
+            <button class="tab-button active" id="capture-tab-button" type="button">촬영</button>
+            <button class="tab-button" id="roi-tab-button" type="button">ROI 설정</button>
+          </div>
+
+          <form class="control-grid tab-panel active" id="capture-form">
+            <label>
+              <span>백엔드 주소</span>
+              <input id="backend-base-input" type="url" autocomplete="off">
+            </label>
+
+            <button class="secondary-button full-width" id="load-policy-button" type="button">설정 불러오기</button>
+
+            <label>
+              <span>CCTV 설정</span>
+              <select id="config-select" required>
+                <option value="">선택</option>
+              </select>
+            </label>
+
+            <label>
+              <span>ROI</span>
+              <select id="roi-select" required>
+                <option value="">선택</option>
+              </select>
+            </label>
+
+            <label>
+              <span>카메라</span>
+              <select id="camera-facing-select">
+                <option value="environment">후면</option>
+                <option value="user">전면</option>
+              </select>
+            </label>
+
+            <label>
+              <span>장치 ID</span>
+              <input id="device-id-input" type="text" autocomplete="off">
+            </label>
+
+            <label>
+              <span>업로드 간격</span>
+              <input id="upload-interval-input" type="number" min="5" step="1" value="60">
+            </label>
+
+            <label>
+              <span>영상 길이</span>
+              <input id="clip-length-input" type="number" min="3" step="1" value="10">
+            </label>
+
+            <label>
+              <span>분석 프로필</span>
+              <select id="prompt-profile-select">
+                <option value="restaurant">식당</option>
+                <option value="general">일반</option>
+              </select>
+            </label>
+          </form>
+
+          <form class="control-grid tab-panel" id="roi-form">
+            <label>
+              <span>매장명</span>
+              <input id="roi-store-input" type="text" autocomplete="off" value="MobileStore">
+            </label>
+
+            <label>
+              <span>CCTV 이름</span>
+              <input id="roi-cctv-input" type="text" autocomplete="off" value="MountedPhone">
+            </label>
+
+            <label>
+              <span>ROI 이름</span>
+              <input id="roi-name-input" type="text" autocomplete="off" value="TABLE_1">
+            </label>
+
+            <button class="secondary-button" id="roi-mode-button" type="button">ROI 그리기</button>
+            <button class="secondary-button" id="clear-roi-button" type="button">ROI 지우기</button>
+            <button class="primary-button" id="save-roi-button" type="button" disabled>ROI 저장</button>
+
+            <div class="roi-summary full-width">
+              <span id="roi-size-text">ROI 없음</span>
+            </div>
+          </form>
+        </aside>
+      </section>
+
+      <section class="result-layout">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>상태</h2>
+            <span id="upload-count">0회</span>
+          </div>
+          <div class="status-text" id="status-text">준비 중</div>
+          <div class="progress-track">
+            <div class="progress-bar" id="progress-bar"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>최근 결과</h2>
+            <span id="last-upload-time">없음</span>
+          </div>
+          <dl class="result-grid">
+            <div>
+              <dt>판정</dt>
+              <dd id="result-decision">-</dd>
+            </div>
+            <div>
+              <dt>점수</dt>
+              <dd id="result-score">-</dd>
+            </div>
+            <div>
+              <dt>신뢰도</dt>
+              <dd id="result-confidence">-</dd>
+            </div>
+          </dl>
+          <p class="result-summary" id="result-summary">-</p>
+        </section>
+      </section>
+
+      <section class="panel upload-panel">
+        <div class="panel-head">
+          <h2>촬영 업로드 현황</h2>
+          <span id="current-upload-status">대기</span>
+        </div>
+        <ol class="upload-event-list" id="upload-event-list">
+          <li class="upload-empty">아직 업로드된 영상이 없습니다.</li>
+        </ol>
+      </section>
+
+      <section class="panel log-panel">
+        <div class="panel-head">
+          <h2>업로드 로그</h2>
+          <button class="ghost-button" id="clear-log-button" type="button">지우기</button>
+        </div>
+        <ol class="log-list" id="log-list"></ol>
+      </section>
+    </main>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>

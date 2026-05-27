@@ -35,6 +35,7 @@ def fake_object_result(confidence: float, score: int = 4) -> CleanlinessResult:
 def fake_action_result() -> ActionCleanlinessResult:
     return ActionCleanlinessResult(
         decision=ACTION_DECISION_CLEANED,
+        score=4,
         confidence=0.88,
         summary="Staff trajectory covered the table.",
         evidence=["테이블 주변 체류 시간 44.0초"],

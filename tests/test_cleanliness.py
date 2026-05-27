@@ -13,6 +13,7 @@ from app.cleanliness import (
     CleanlinessAssessment,
     CleanlinessResult,
     CleanlinessService,
+    PROMPT_PROFILE_GENERAL,
     PROMPT_PROFILE_RESTAURANT,
     build_cleanliness_analysis_prompt,
 )
@@ -159,6 +160,13 @@ class CleanlinessTest(unittest.TestCase):
         self.assertIn("food residue", prompt)
         self.assertIn("exact_objects", prompt)
         self.assertIn("estimated_objects", prompt)
+
+    def test_general_prompt_penalizes_wrappers_and_debris_on_surfaces(self) -> None:
+        prompt = build_cleanliness_analysis_prompt(PROMPT_PROFILE_GENERAL)
+
+        self.assertIn("do not use 3 when identifiable trash", prompt)
+        self.assertIn("wrappers, snack packets, food packaging, or debris", prompt)
+        self.assertIn("desk, table, counter, tray, or floor should normally score 2 or lower", prompt)
 
 
 if __name__ == "__main__":

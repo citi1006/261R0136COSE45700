@@ -385,6 +385,11 @@ textarea {
   color: #991b1b;
 }
 
+.status.in_use {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
 .result-card {
   border: 1px solid #d1d5db;
   border-radius: 8px;

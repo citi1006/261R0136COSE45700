@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi.testclient import TestClient
 
@@ -15,6 +16,7 @@ from app.database import (
     init_db,
     insert_cleanliness_result,
 )
+from app.schemas import CCTVConfig, ROI
 from scripts.generate_test_data import generate_test_data
 
 
@@ -145,6 +147,64 @@ class CleanlinessReportsTest(unittest.TestCase):
         self.assertIn("매장별 청결도 요약", response.text)
         self.assertIn("StoreA", response.text)
         self.assertIn("cleaned_likely", response.text)
+
+    def test_reports_page_reflects_cleanliness_records_with_cctv_filter(self) -> None:
+        insert_cleanliness_result(
+            {
+                "analyzed_at": datetime(2026, 5, 27, 12, 0).isoformat(timespec="minutes"),
+                "store_name": "StoreBeta",
+                "cctv_id": "StoreBeta::RealCam",
+                "cctv_nickname": "RealCam",
+                "roi_name": "TABLE_1",
+                "mode": "video",
+                "decision": "unknown",
+                "score": None,
+                "confidence": 0.0,
+                "final_stage": "queued",
+                "summary": "Video analysis job accepted.",
+                "source_path": "data/mobile_videos/queued.avi",
+                "crop_path": "",
+                "exact_objects": "[]",
+                "estimated_objects": "[]",
+                "findings": "[]",
+                "action_features": "{}",
+            }
+        )
+
+        client = TestClient(main_module.app)
+        response = client.get("/reports", params={"cctv_id": "StoreBeta::RealCam"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("StoreBeta", response.text)
+        self.assertIn("RealCam", response.text)
+        self.assertIn("queued", response.text)
+        self.assertIn("Video analysis job accepted.", response.text)
+
+    def test_reports_page_includes_configured_store_without_results(self) -> None:
+        original_store = main_module.config_store
+
+        class FakeConfigStore:
+            def list_configs(self) -> list[Any]:
+                return [
+                    CCTVConfig(
+                        store_name="ConfiguredOnlyStore",
+                        cctv_nickname="MountedPhone",
+                        reference_image_path="reference_images/configured_only.png",
+                        areas=[ROI.from_rectangle("TABLE_1", 10, 20, 100, 80)],
+                    )
+                ]
+
+        try:
+            main_module.config_store = FakeConfigStore()
+            client = TestClient(main_module.app)
+            response = client.get("/reports")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("ConfiguredOnlyStore", response.text)
+            self.assertIn("ConfiguredOnlyStore::MountedPhone", response.text)
+            self.assertIn("TABLE_1", response.text)
+        finally:
+            main_module.config_store = original_store
 
     def test_cleanliness_reports_url_redirects_to_reports(self) -> None:
         client = TestClient(main_module.app)

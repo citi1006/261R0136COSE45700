@@ -1,13 +1,23 @@
-.env
+.git/
 .idea/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.pytest_cache/
+
+.env
+.env.*
+!.env.example
 
 data/uploads/
 data/mobile_videos/
 data/analysis_crops/
 data/person_masks/
+data/test_data/
 data/mvp1.sqlite3
 data/poster_templates/*_poster_*
+
+tests/
+scripts/
+node_modules/

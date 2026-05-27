@@ -123,6 +123,12 @@ $existing = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction Sile
 if ($existing) { Stop-Process -Id $existing -Force }
 ```
 
+### Docker 컨테이너 실행
+```powershell
+docker run --rm -p 8000:8000 --env-file .env -v "${PWD}\data:/app/data" mvp1-backend:latest
+```
+
+
 ## 테스트
 
 ```powershell

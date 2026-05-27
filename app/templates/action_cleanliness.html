@@ -2,8 +2,8 @@
 {% block content %}
 <section class="section">
   <div class="section-head">
-    <h1>Action 청결도</h1>
-    <p>결제 이후 직원 배지 동선으로 테이블 청소 수행 가능성을 판단합니다.</p>
+    <h1>Action 기반 청결도</h1>
+    <p>결제 완료 이후 직원 배지 dwell_seconds로 테이블 청결도를 판단합니다.</p>
   </div>
 </section>
 
@@ -25,8 +25,33 @@
       </label>
 
       <label>
-        <span>테이블 ROI</span>
-        <select name="roi_name" id="action-roi-select" required></select>
+        <span>테이블 ROI 인덱스</span>
+        <select name="table_roi_index" id="action-roi-index-select" required></select>
+        <input type="hidden" name="roi_name" id="action-roi-name-input" value="{{ selected_roi_name or '' }}">
+      </label>
+
+      <label>
+        <span>주문 시간</span>
+        <input
+          type="text"
+          name="order_time"
+          value="{{ order_time }}"
+          placeholder="YYYY-MM-DDTHH:mm:ss"
+          autocomplete="off"
+          spellcheck="false"
+          required>
+      </label>
+
+      <label>
+        <span>결제 완료 시간</span>
+        <input
+          type="text"
+          name="payment_completed_time"
+          value="{{ payment_completed_time }}"
+          placeholder="YYYY-MM-DDTHH:mm:ss"
+          autocomplete="off"
+          spellcheck="false"
+          required>
       </label>
 
       <label>
@@ -35,7 +60,7 @@
       </label>
 
       <label>
-        <span>결제 이후 직원 배지 동선 JSON</span>
+        <span>직원 배지 동선 JSON</span>
         <textarea name="trajectory_json" rows="12" required>{{ trajectory_json or sample_trajectory_json }}</textarea>
       </label>
 
@@ -55,13 +80,25 @@
     {% if action_result %}
     <div class="result-card">
       <div class="result-topline">
-        <span class="status {% if action_result.decision == 'cleaned_likely' %}present{% elif action_result.decision == 'needs_check' %}absent{% else %}unknown{% endif %}">
-          {{ action_result.decision }}
+        <span class="status {% if action_result.decision == 'cleaned_likely' %}present{% elif action_result.decision == 'needs_check' %}absent{% elif action_result.decision == 'in_use' %}in_use{% else %}unknown{% endif %}">
+          {% if action_result.decision == 'in_use' %}사용중{% else %}{{ action_result.decision }}{% endif %}
         </span>
-        <strong>{{ action_result.store_name }} / {{ action_result.cctv_nickname }} / {{ action_result.roi_name }}</strong>
+        <strong>{{ action_result.store_name }} / {{ action_result.cctv_nickname }} / ROI #{{ action_result.table_roi_index }} {{ action_result.roi_name }}</strong>
       </div>
 
       <dl class="result-grid">
+        <div>
+          <dt>Action 청결도 점수</dt>
+          <dd class="score-large">{{ action_result.score_label }}</dd>
+        </div>
+        <div>
+          <dt>주문 시간</dt>
+          <dd>{{ action_result.order_time }}</dd>
+        </div>
+        <div>
+          <dt>결제 완료 시간</dt>
+          <dd>{{ action_result.payment_completed_time }}</dd>
+        </div>
         <div>
           <dt>신뢰도</dt>
           <dd>{{ "%.0f"|format(action_result.confidence * 100) }}%</dd>
@@ -115,7 +152,7 @@
       </table>
     </div>
     {% else %}
-    <p class="helper">테이블 ROI와 결제 이후 직원 배지 동선을 입력하면, 테이블 주변 체류 시간만으로 청소 수행 가능성을 계산합니다.</p>
+    <p class="helper">결제 정보와 직원 배지 동선을 입력하면, 주문부터 결제 완료까지는 사용중으로 두고 결제 완료 이후 dwell_seconds만 계산합니다.</p>
     {% endif %}
   </section>
 </section>
@@ -124,33 +161,44 @@
   const actionConfigs = {{ configs_payload|tojson }};
   const selectedActionConfigId = "{{ selected_config.config_id if selected_config else '' }}";
   const selectedActionRoiName = "{{ selected_roi_name or '' }}";
+  const selectedActionRoiIndex = "{{ selected_table_roi_index or '' }}";
   const actionConfigSelect = document.getElementById("action-config-select");
-  const actionRoiSelect = document.getElementById("action-roi-select");
+  const actionRoiIndexSelect = document.getElementById("action-roi-index-select");
+  const actionRoiNameInput = document.getElementById("action-roi-name-input");
 
   function renderActionRois(configId) {
-    actionRoiSelect.innerHTML = "";
+    actionRoiIndexSelect.innerHTML = "";
     const selected = actionConfigs.find((item) => item.config_id === configId);
     if (!selected) {
       const option = document.createElement("option");
       option.value = "";
       option.textContent = "먼저 CCTV 설정 선택";
-      actionRoiSelect.appendChild(option);
+      actionRoiIndexSelect.appendChild(option);
+      actionRoiNameInput.value = "";
       return;
     }
 
-    selected.areas.forEach((area) => {
+    selected.areas.forEach((area, index) => {
       const option = document.createElement("option");
-      option.value = area.name;
+      option.value = String(index);
       const pointSummary = (area.points || []).map((point) => `(${point.x}, ${point.y})`).join(" ");
-      option.textContent = `${area.name} ${pointSummary}`;
-      if (area.name === selectedActionRoiName) {
+      option.textContent = `${index}: ${area.name} ${pointSummary}`;
+      if (String(index) === selectedActionRoiIndex || (!selectedActionRoiIndex && area.name === selectedActionRoiName)) {
         option.selected = true;
       }
-      actionRoiSelect.appendChild(option);
+      actionRoiIndexSelect.appendChild(option);
     });
+    syncActionRoiName();
+  }
+
+  function syncActionRoiName() {
+    const selected = actionConfigs.find((item) => item.config_id === actionConfigSelect.value);
+    const index = Number(actionRoiIndexSelect.value);
+    actionRoiNameInput.value = selected && selected.areas[index] ? selected.areas[index].name : "";
   }
 
   actionConfigSelect.addEventListener("change", (event) => renderActionRois(event.target.value));
+  actionRoiIndexSelect.addEventListener("change", syncActionRoiName);
   renderActionRois(selectedActionConfigId || actionConfigSelect.value);
 </script>
 {% endblock %}
